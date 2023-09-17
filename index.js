@@ -1,4 +1,4 @@
-require('dotenv').config({ path: './env/.env' })
+require('dotenv').config({ path: './config/.env' })
 // const socket = require('./controllers/socket')
 const parser = require('./lib/parser')
 
@@ -39,7 +39,7 @@ client.on('connect', function (connection) {
             console.log('Token received.')
             clearInterval(checkToken)
             console.log('sending stuff')
-            connection.sendUTF('CAP REQ :twitch.tv/commands twitch.tv/tags')
+            connection.sendUTF('CAP REQ :twitch.tv/commands twitch.tv/tags twitch.tv/membership')
             connection.sendUTF(`PASS oauth:${token}`)
             connection.sendUTF('NICK g00b_bot');
             connection.sendUTF('JOIN #g00b_g00b')
@@ -55,18 +55,28 @@ client.on('connect', function (connection) {
             console.log('parsed', parsed)
             // setTimeout(() => {
             if (parsed) {
-                if(parsed.tags) {
+                if (parsed.tags) {
                     userId = parsed.tags['user-id']
                     userName = parsed.tags['display-name']
                 }
                 if (parsed.command) {
                     switch (parsed.command.botCommand) {
+
                         case 'test':
                             console.log('test bot command')
                             connection.sendUTF('PRIVMSG #g00b_g00b :test command was used')
                             break
                         case 'bot-test':
                             console.log('bot-test command')
+                            break
+                    }
+                    switch (parsed.command.command) {
+                        case 'PING':
+                            console.log('parsed.parameters', parsed.parameters)
+                            connection.sendUTF(`PONG :${parsed.parameters}`)
+                            break
+                        case 'JOIN':
+                            console.log('JOIIIINNN')
                             break
                     }
                 }
@@ -84,13 +94,22 @@ client.on('connect', function (connection) {
                     //             'reason': 'Because it\'s fun'
                     //         }
                     //     })
+                    case '':
+                        break;
                 }
                 // console.log('userId:', userId)
             }
             // }, 100);
         }
     });
+
+    connection.on('close', function () {
+        console.log('Connection Closed');
+        console.log(`close description: ${connection.closeDescription}`);
+        console.log(`close reason code: ${connection.closeReasonCode}`);
+    });
 });
+
 
 client.connect('wss://irc-ws.chat.twitch.tv:443');
 
@@ -166,7 +185,7 @@ app.get('/auth/callback', async (req, res) => {
         res.redirect('/')
     } else {
         console.log('State string does match server response')
-        return
+        res.redirect('/')
     }
 
 

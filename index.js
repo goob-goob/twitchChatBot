@@ -4,19 +4,26 @@ const parser = require('./lib/parser')
 
 const fs = require('fs')
 const fetch = require('node-fetch')
+const url = require('url')
+// const spotifyApi = new SpotifyWebApi()
+
 
 let token = ''
 let userId = ''
 let userName = ''
 
-fs.readFile('token.txt', 'utf8', (err, data) => {
-    if (err) {
-        console.error(err);
-        return;
-    }
-    // console.log(data);
-    token = data
-});
+let spotifyToken = {}
+
+
+
+// fs.readFileSync('spotifytoken.txt', 'utf8', (err, data) => {
+//     if (err) {
+//         console.error('readFile error: ', err);
+//         return;
+//     }
+//     // console.log(data);
+//     spotify_token = data
+// });
 
 validateToken()
 
@@ -31,8 +38,17 @@ client.on('connectFailed', function (error) {
     console.log('Connect Error: ' + error.toString());
 });
 
-client.on('connect', function (connection) {
+client.on('connect', async function (connection) {
     console.log('WebSocket Client Connected');
+
+    await fs.readFile('token.txt', 'utf8', (err, data) => {
+        if (err) {
+            console.error('readFile error: ', err);
+            return;
+        }
+        // console.log(data);
+        token = data
+    });
 
     const checkToken = setInterval(() => {
         if (token !== '') {
@@ -68,6 +84,26 @@ client.on('connect', function (connection) {
                             break
                         case 'bot-test':
                             console.log('bot-test command')
+                            break
+                        case 'song':
+                            console.log('!song command used')
+                            const expired = await checkSpotifyTokenIsExpired()
+                            console.log(expired)
+                            if(expired) {
+                                await refreshSpotifyToken()
+                            } else {
+                                // console.log
+                                const currentSongInfo = await getCurrentSpotifySong()
+                                console.log(currentSongInfo)
+                                const artists = currentSongInfo.artists.map((x) => x.name)
+                                if(artists.length > 1) {
+                                    connection.sendUTF(`PRIVMSG #g00b_g00b :NOW PLAYING: '${currentSongInfo.name}' by '${artists}'`)
+                                } else {
+                                    connection.sendUTF(`PRIVMSG #g00b_g00b :NOW PLAYING: '${currentSongInfo.name}' by '${artists}'`)
+                                }
+                            }
+
+
                             break
                     }
                     switch (parsed.command.command) {
@@ -120,13 +156,14 @@ app.set('view engine', 'ejs')
 
 const mainRoutes = require('./routes/main')
 const authRoutes = require('./routes/auth')
+const { default: SpotifyWebApi } = require('spotify-web-api-js')
 
 // app.use('/', mainRoutes)
 // app.use('/auth', authRoutes)
 
 
+let state = ''
 
-const state = generateString(32);
 
 app.get('/', (req, res) => {
     // if(req.user) { res.render('folders.ejs', { user: req.user.userName }) }
@@ -134,9 +171,13 @@ app.get('/', (req, res) => {
 })
 
 app.get('/auth', (req, res) => {
+    console.log('GET /auth')
     let baseURL = 'https://id.twitch.tv/oauth2/authorize?'
     let pstring = ''
     let params = new URLSearchParams()
+
+    state = generateString(32);
+
     params.set('client_id', process.env.CLIENT_ID)
     params.set('redirect_uri', 'http://localhost:3000/auth/callback')
     params.set('response_type', 'code')
@@ -181,7 +222,7 @@ app.get('/auth/callback', async (req, res) => {
         } catch (err) {
             console.error(err);
         }
-
+        state = ''
         res.redirect('/')
     } else {
         console.log('State string does match server response')
@@ -189,6 +230,78 @@ app.get('/auth/callback', async (req, res) => {
     }
 
 
+})
+
+app.get('/spotify/auth', async (req, res) => {
+    console.log('GET spotify/auth')
+
+    state = generateString(8)
+    console.log(state)
+
+    const endpoint = 'https://accounts.spotify.com/authorize?'
+
+    const p = new URLSearchParams()
+    p.append('grant_type', 'client_credentials')
+    p.append('client_id', process.env.SPOTIFY_ID)
+    // p.append('client_secret', process.env.SPOTIFY_SECRET)
+    p.append('response_type', 'code')
+    p.append('redirect_uri', 'http://localhost:3000/spotify/auth/callback')
+    p.append('state', state)
+    p.append('scope', 'user-read-playback-state')
+
+    const params = p.toString()
+
+
+    res.redirect(endpoint + params)
+})
+
+app.get('/spotify/auth/callback', async (req, res) => {
+    console.log('GET spotify/auth/callback')
+
+    console.log('state', state)
+    console.log('req.state', req.query.state)
+    console.log('req.state.slice()', req.query.state.slice(1))
+    console.log(req.query)
+
+    const code = req.query.code
+    const responseState = req.query.state
+    console.log('state', state, typeof state, state.length)
+    console.log('responseState', responseState, typeof responseState, responseState.length)
+    if (responseState == state) {
+        const endpoint = 'https://accounts.spotify.com/api/token?'
+
+        const p = new URLSearchParams()
+        p.append('grant_type', 'authorization_code')
+        p.append('code', code)
+        p.append('redirect_uri', 'http://localhost:3000/spotify/auth/callback')
+        const params = p.toString()
+
+        const response = await fetch(endpoint + params, {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + (new Buffer.from(process.env.SPOTIFY_ID + ':' + process.env.SPOTIFY_SECRET).toString('base64')),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            json: true
+        })
+
+        const jason = await response.json()
+        console.log(jason)
+        spotifyToken = {
+            accessToken: jason.access_token,
+            tokenType: jason.token_tye,
+            expiresIn: jason.expires_in,
+            refreshToken: jason.refresh_token,
+            scope: jason.scope,
+
+            expiration: Date.now() + jason.expires_in
+        }
+
+        res.redirect('/')
+    } else {
+        console.log('State strings do not match')
+        res.redirect('/')
+    }
 })
 
 
@@ -206,7 +319,7 @@ app.listen(port, () => {
 
 function generateString(length) {
     const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = ' ';
+    let result = '';
     const charactersLength = characters.length;
     for (let i = 0; i < length; i++) {
         result += characters.charAt(Math.floor(Math.random() * charactersLength));
@@ -217,6 +330,7 @@ function generateString(length) {
 
 async function validateToken() {
     console.log('validating')
+    if (token !== '') return
     const endpoint = 'https://id.twitch.tv/oauth2/validate'
 
     const response = await fetch(endpoint, {
@@ -235,4 +349,60 @@ async function validateToken() {
         })
         console.log('validation: ', response)
     }, 3600000)
+}
+
+async function checkSpotifyTokenIsExpired() {
+    console.log('checkSpotifyTokenIsExpired()')
+    const now = Date.now()
+    console.log('spotifyToken.expiration > now', spotifyToken.expiration > now)
+    return spotifyToken.expiration > Date.now()
+}
+
+async function refreshSpotifyToken() {
+    console.log('refreshSpotifyToken()')
+    const endpoint = 'https://accounts.spotify.com/api/token?'
+    const p = new URLSearchParams()
+    p.append('grant_type', 'refresh_token')
+    p.append('refresh_token', spotifyToken.refreshToken)
+
+    const params = p.toString()
+
+    const response = await fetch(endpoint + params, {
+        method: 'POST',
+        headers: {
+            'Authorization': 'Basic ' + (new Buffer.from(process.env.SPOTIFY_ID + ':' + process.env.SPOTIFY_SECRET).toString('base64')),
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        json: true
+    })
+
+    const jason = await response.json()
+
+    console.log(jason)
+
+    return
+}
+
+async function getCurrentSpotifySong() {
+    console.log('getCurrentSpotifySong()')
+
+    const endpoint = 'https://api.spotify.com/v1/me/player?'
+
+    const response = await fetch(endpoint, {
+        headers: {
+            'Authorization': 'Bearer ' + spotifyToken.accessToken
+        },
+        json: true
+    })
+
+    const jason = await response.json()
+    console.log(jason)
+
+    console.log(jason.item.artists)
+    console.log(jason.item.name)
+
+    const artists = jason.item.artists
+    const name = jason.item.name
+
+    return {name, artists}
 }

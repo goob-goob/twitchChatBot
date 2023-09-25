@@ -1,5 +1,10 @@
+/config/*
 /node_modules/
-./config/
+./config/*
 *.txt
 /media/
 *.env
+/.env
+config/.env
+.env
+config/
